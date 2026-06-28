@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>通行密钥登录</title>
+<style>
+:root{
+  --accent:#7c6cf0;--accent2:#46d6c4;--glow:rgba(124,108,240,.4);
+  --ok:#34d399;--err:#f87171;--stroke:rgba(255,255,255,.12);
+  --text:#eef0ff;--muted:#a6a9c8;
+}
+*,::before,::after{box-sizing:border-box;margin:0;padding:0}
+body{
+  min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;overflow:hidden;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  color:var(--text);
+  background:linear-gradient(-45deg,#0f0c29,#302b63,#24243e,#1a1a3a) 0/400% 400%;
+  animation:bg 18s ease infinite;
+}
+@keyframes bg{50%{background-position:100% 50%}}
+
+/* floating glow blobs */
+.blob{position:fixed;z-index:0;border-radius:50%;filter:blur(70px);opacity:.5;animation:float 14s ease-in-out infinite}
+.blob.a{width:340px;height:340px;top:-80px;left:-60px;background:#7c6cf0}
+.blob.b{width:300px;height:300px;right:-50px;bottom:-90px;background:#46d6c4;animation-delay:-5s}
+.blob.c{width:240px;height:240px;top:40%;right:20%;background:#f06cae;animation-delay:-9s}
+@keyframes float{33%{transform:translate(30px,-40px) scale(1.08)}66%{transform:translate(-25px,25px) scale(.94)}}
+
+/* glass card */
+.card{
+  position:relative;z-index:1;width:100%;max-width:400px;padding:48px 36px 40px;text-align:center;
+  border:1px solid var(--stroke);border-radius:24px;background:rgba(255,255,255,.06);
+  backdrop-filter:blur(22px) saturate(1.4);-webkit-backdrop-filter:blur(22px) saturate(1.4);
+  box-shadow:0 24px 70px rgba(0,0,0,.45);animation:rise .7s cubic-bezier(.2,.8,.2,1)
+}
+@keyframes rise{from{opacity:0;transform:translateY(24px)}}
+
+.icon{
+  display:flex;align-items:center;justify-content:center;width:72px;height:72px;margin:0 auto 20px;
+  border-radius:20px;background:linear-gradient(135deg,var(--accent),#a78bfa);
+  box-shadow:0 4px 20px var(--glow);animation:breathe 3s ease-in-out infinite
+}
+.icon svg{width:36px;height:36px;fill:#fff}
+@keyframes breathe{50%{box-shadow:0 4px 32px rgba(124,108,240,.6)}}
+
+h1{margin-bottom:6px;font-size:22px;font-weight:600}
+.sub{min-height:22px;margin-bottom:32px;font-size:14px;line-height:1.6;color:var(--muted)}
+
+.btn{
+  width:100%;padding:15px 0;font-size:15px;font-weight:600;color:#fff;cursor:pointer;
+  border:none;border-radius:12px;background:linear-gradient(135deg,var(--accent),#9b7cf8);
+  box-shadow:0 4px 16px var(--glow);transition:transform .15s,box-shadow .25s
+}
+.btn:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 6px 24px var(--glow)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn .spinner{display:none;width:18px;height:18px;margin:0 auto;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite}
+.btn.loading .btn-text{display:none}
+.btn.loading .spinner{display:block}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.msg{min-height:20px;margin-top:16px;font-size:13px;opacity:0;transition:.3s}
+.msg.visible{opacity:1}
+.msg.err{color:var(--err)}
+.msg.ok{color:var(--ok)}
+
+.cred-box{display:none;margin-top:24px;animation:rise .4s ease}
+.cred-box .check-circle{
+  display:flex;align-items:center;justify-content:center;width:56px;height:56px;margin:0 auto 16px;
+  border:2px solid var(--ok);border-radius:50%;background:rgba(52,211,153,.12)
+}
+.cred-box .check-circle svg{width:28px;height:28px;fill:var(--ok)}
+.cred-box h2{margin-bottom:6px;font-size:17px;font-weight:600;color:var(--ok)}
+.cred-box .desc{margin-bottom:16px;font-size:13px;line-height:1.5;color:var(--muted)}
+.cred-box .file-label{display:flex;justify-content:space-between;margin-bottom:6px;font-size:12px;color:var(--muted)}
+.cred-box .file-label .name{font-weight:600;color:var(--accent2)}
+.cred-box textarea{
+  width:100%;height:100px;padding:10px;font-family:"Fira Code",ui-monospace,monospace;font-size:11px;
+  text-align:left;resize:vertical;color:var(--muted);border:1px solid var(--stroke);border-radius:10px;background:rgba(0,0,0,.35)
+}
+.cred-box textarea:focus{outline:none;border-color:var(--accent)}
+.cred-box .actions{display:flex;gap:10px;margin-top:16px}
+.cred-box .actions button{flex:1;padding:13px 0;font-size:14px;font-weight:600;cursor:pointer;border:none;border-radius:12px}
+.cred-box .copy{color:#fff;background:var(--accent);box-shadow:0 4px 12px var(--glow)}
+.cred-box .done-btn{color:var(--text);border:1px solid var(--stroke);background:rgba(255,255,255,.06)}
+
+@media(max-width:440px){
+  .card{padding:36px 20px 32px;border-radius:18px}
+  h1{font-size:19px}
+  .icon{width:64px;height:64px;border-radius:18px}
+}
+</style>
+</head>
+<body>
+<div class="blob a"></div><div class="blob b"></div><div class="blob c"></div>
+<div class="card">
+  <div class="icon">
+    <svg viewBox="0 0 24 24"><path d="M6 10V7a6 6 0 1 1 12 0v3h1a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h1zm2 0h8V7a4 4 0 0 0-8 0v3zm4 5.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z"/></svg>
+  </div>
+  <h1 id="title">通行密钥</h1>
+  <div class="sub" id="sub">正在检查…</div>
+  <button class="btn" id="btn" disabled>
+    <span class="btn-text">请稍候</span>
+    <span class="spinner"></span>
+  </button>
+  <div class="msg" id="msg"></div>
+  <div class="cred-box" id="credBox">
+    <div class="check-circle">
+      <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+    </div>
+    <h2>通行密钥已创建</h2>
+    <div class="desc">保存下方内容，刷新页面即可登录</div>
+    <div class="file-label"><span>凭据文件</span><span class="name" id="credPath"></span></div>
+    <textarea id="credJson" readonly></textarea>
+    <div class="actions">
+      <button class="copy" id="copyBtn">复制内容</button>
+      <button class="done-btn" id="doneBtn">完成</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var btn=document.getElementById('btn'),
+      msg=document.getElementById('msg'),
+      sub=document.getElementById('sub'),
+      title=document.getElementById('title'),
+      mode='login',
+      pendingOpts=null;
+
+  function b64urlToBuf(s){
+    s=s.replace(/-/g,'+').replace(/_/g,'/');
+    while(s.length%4) s+='=';
+    var bin=atob(s),buf=new Uint8Array(bin.length);
+    for(var i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
+    return buf.buffer;
+  }
+
+  function bufToB64url(buf){
+    var bytes=new Uint8Array(buf),bin='';
+    for(var i=0;i<bytes.length;i++) bin+=String.fromCharCode(bytes[i]);
+    return btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  }
+
+  function show(text,cls){
+    msg.textContent=text;
+    msg.className='msg visible'+(cls?' '+cls:'');
+  }
+
+  function setLoading(v){
+    btn.classList.toggle('loading',v);
+    btn.disabled=v;
+  }
+
+  function nextUrl(){
+    var p=new URLSearchParams(location.search).get('next');
+    if(!p||p[0]!=='/'||(p.length>1&&p[1]==='/')) return '/';
+    return p;
+  }
+
+  async function doLogout(){
+    setLoading(true);
+    try{
+      var res=await fetch('/auth/logout',{method:'POST'}).then(function(r){return r.json()});
+      if(res.ok){location.reload();}
+      else{show('退出失败: '+(res.error||'未知错误'),'err');}
+    }catch(e){show('网络错误','err');}
+    setLoading(false);
+  }
+
+  async function init(){
+    if(!window.PublicKeyCredential){sub.textContent='浏览器不支持';return}
+    try{
+      var st=await fetch('/auth/state').then(function(r){return r.json()});
+      if(st.authenticated){
+        mode='logged';
+        title.textContent='已登录';
+        sub.textContent='您已通过身份验证';
+        btn.querySelector('.btn-text').textContent='退出登录';
+        btn.disabled=false;
+        btn.onclick=doLogout;
+        return;
+      }
+      if(st.registered){
+        mode='login';
+        title.textContent='欢迎回来';
+        sub.textContent='使用通行密钥登录';
+        btn.querySelector('.btn-text').textContent='登录';
+      }else{
+        mode='register';
+        title.textContent='创建通行密钥';
+        sub.textContent='注册后无需密码即可登录';
+        btn.querySelector('.btn-text').textContent='创建';
+      }
+      await prefetchOptions();
+      btn.disabled=false;
+    }catch(e){sub.textContent='无法连接服务器'}
+  }
+
+  async function prefetchOptions(){
+    if(mode==='register'){
+      var opts=await fetch('/auth/register/begin',{method:'POST'}).then(function(r){return r.json()});
+      if(opts.error) throw new Error(opts.error);
+      opts.challenge=b64urlToBuf(opts.challenge);
+      opts.user.id=b64urlToBuf(opts.user.id);
+      pendingOpts=opts;
+    }else{
+      var lopts=await fetch('/auth/login/begin',{method:'POST'}).then(function(r){return r.json()});
+      if(lopts.error) throw new Error(lopts.error);
+      lopts.challenge=b64urlToBuf(lopts.challenge);
+      lopts.allowCredentials=lopts.allowCredentials.map(function(c){return{type:c.type,id:b64urlToBuf(c.id)}});
+      pendingOpts=lopts;
+    }
+  }
+
+  async function doRegister(){
+    var cred=await navigator.credentials.create({publicKey:pendingOpts});
+    var body={
+      id:cred.id,rawId:bufToB64url(cred.rawId),type:cred.type,
+      response:{clientDataJSON:bufToB64url(cred.response.clientDataJSON),attestationObject:bufToB64url(cred.response.attestationObject)}
+    };
+    var res=await fetch('/auth/register/finish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json()});
+    if(!res.ok) throw new Error(res.error||'注册失败');
+    return res;
+  }
+
+  async function doLogin(){
+    var cred=await navigator.credentials.get({publicKey:pendingOpts});
+    var body={
+      id:cred.id,rawId:bufToB64url(cred.rawId),type:cred.type,
+      response:{clientDataJSON:bufToB64url(cred.response.clientDataJSON),authenticatorData:bufToB64url(cred.response.authenticatorData),signature:bufToB64url(cred.response.signature),userHandle:cred.response.userHandle?bufToB64url(cred.response.userHandle):null}
+    };
+    var res=await fetch('/auth/login/finish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json()});
+    if(!res.ok) throw new Error(res.error||'登录失败');
+  }
+
+  btn.addEventListener('click',async function(){
+    if(mode==='logged') return;
+    setLoading(true);
+    show('请完成设备验证…');
+    try{
+      if(mode==='register'){
+        var res=await doRegister();
+        var text=JSON.stringify(res.credential,null,2);
+        document.getElementById('credPath').textContent=res.file;
+        document.getElementById('credJson').value=text;
+        document.getElementById('credBox').style.display='block';
+        btn.style.display='none';
+        msg.style.display='none';
+        document.getElementById('copyBtn').addEventListener('click',function(){
+          var self=this;
+          navigator.clipboard.writeText(text).then(function(){
+            self.textContent='已复制';
+            self.style.background='rgba(34,197,94,.2)';
+            self.style.color='var(--ok)';
+            setTimeout(function(){self.textContent='复制内容';self.style.background='';self.style.color=''},1500);
+          });
+        });
+        document.getElementById('doneBtn').addEventListener('click',function(){location.href=nextUrl()});
+      }else{
+        await doLogin();
+        show('登录成功','ok');
+        setTimeout(function(){location.href=nextUrl()},500);
+      }
+    }catch(e){
+      var map={
+        NotAllowedError:'操作已取消，请重试',
+        SecurityError:'安全限制，请使用 HTTPS 访问',
+        InvalidStateError:'该设备已注册过，请直接登录',
+        NotSupportedError:'设备不支持此操作',
+        AbortError:'操作已取消',
+        NetworkError:'网络异常，请检查连接'
+      };
+      show(map[e.name]||'操作失败，请重试','err');
+      setLoading(false);
+      try{await prefetchOptions();}catch(_){}
+    }
+  });
+
+  init();
+})();
+</script>
+</body>
+</html>
