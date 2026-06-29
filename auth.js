@@ -87,27 +87,91 @@ const loadCred = (r) => {
     }
 };
 
+const sessionCookie = (sid, maxAge) =>
+    `${COOKIE}=${sid}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAge}`;
+
+const addCookie = (r, cookie) => {
+    const current = r.headersOut['Set-Cookie'];
+    if (!current) {
+        r.headersOut['Set-Cookie'] = cookie;
+        return;
+    }
+    r.headersOut['Set-Cookie'] = Array.isArray(current) ? current.concat(cookie) : [current, cookie];
+};
+
 const createSession = (r) => {
     const sid = randomB64(32);
     const now = nowSec();
-    ngx.shared.authsess.set(sid, `${now}|${now + SESSION_TTL}`);
-    r.headersOut['Set-Cookie'] =
-        `${COOKIE}=${sid}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${SESSION_TTL}`;
+    const exp = now + SESSION_TTL;
+    ngx.shared.authsess.set(sid, `${now}|${exp}`);
+    r.headersOut['Set-Cookie'] = sessionCookie(sid, SESSION_TTL);
 };
 
-const validSession = (r) => {
+const sessionInfo = (r) => {
     const sid = getCookie(r, COOKIE);
-    if (!sid) return false;
+    if (!sid) return null;
     const raw = ngx.shared.authsess.get(sid);
-    if (!raw) return false;
+    if (!raw) return null;
     const now = nowSec();
     const parts = raw.split('|');
     const createdAt = parseInt(parts[0], 10);
     const exp = parseInt(parts[1], 10);
-    if (Number.isNaN(createdAt) || Number.isNaN(exp)) { ngx.shared.authsess.delete(sid); return false; }
-    if (now > createdAt + SESSION_MAX_LIFETIME) { ngx.shared.authsess.delete(sid); return false; }
-    if (exp < now) { ngx.shared.authsess.delete(sid); return false; }
-    ngx.shared.authsess.set(sid, `${createdAt}|${now + SESSION_TTL}`);
+    if (Number.isNaN(createdAt) || Number.isNaN(exp)) {
+        ngx.shared.authsess.delete(sid);
+        return null;
+    }
+    const maxExp = createdAt + SESSION_MAX_LIFETIME;
+    if (now >= maxExp) {
+        ngx.shared.authsess.delete(sid);
+        return null;
+    }
+    if (exp < now) {
+        ngx.shared.authsess.delete(sid);
+        return null;
+    }
+    return { sid, now, createdAt, maxExp };
+};
+
+const validSession = (r) => !!sessionInfo(r);
+
+const refreshSession = (r) => {
+    const s = sessionInfo(r);
+    if (!s) return false;
+    const nextExp = Math.min(s.now + SESSION_TTL, s.maxExp);
+    ngx.shared.authsess.set(s.sid, `${s.createdAt}|${nextExp}`);
+    addCookie(r, sessionCookie(s.sid, nextExp - s.now));
+    return true;
+};
+
+const alreadyRegistered = (r) => {
+    if (!loadCred(r)) return false;
+    json(r, 403, { error: 'already registered' });
+    return true;
+};
+
+const loadRegisteredCred = (r) => {
+    const cred = loadCred(r);
+    if (!cred) json(r, 404, { error: 'not registered' });
+    return cred;
+};
+
+const clearChallenge = (r) => {
+    const key = getCookie(r, 'njs_chal');
+    if (!key) return;
+    ngx.shared.authchal.delete(key);
+    ngx.shared.authchal.delete(`${key}:taken`);
+};
+
+const requirePostSameOrigin = (r) => {
+    if (r.method !== 'POST') {
+        json(r, 405, { error: 'POST only' });
+        return false;
+    }
+    const ref = r.headersIn['Origin'];
+    if (!ref || ref !== origin(r)) {
+        json(r, 403, { error: 'forbidden' });
+        return false;
+    }
     return true;
 };
 
@@ -126,7 +190,7 @@ const takeChallenge = (r, type) => {
     const parts = raw.split('|');
     if (parts[0] !== type) return null;
     if (parseInt(parts[2], 10) < nowSec()) return null;
-    if (!ngx.shared.authchal.add(`${key}:taken`, '1', CHALLENGE_TTL)) return null;
+    if (!ngx.shared.authchal.add(`${key}:taken`, '1', CHALLENGE_TTL * 1000)) return null;
     return parts[1];
 };
 
@@ -154,7 +218,10 @@ class CborReader {
     readUint(info) {
         if (info < 24) return info;
         if (info === 24) return this.u8();
-        if (info === 25) { this.check(2); return (this.u8() << 8) | this.u8(); }
+        if (info === 25) {
+            this.check(2);
+            return (this.u8() << 8) | this.u8();
+        }
         if (info === 26) {
             this.check(4);
             return (this.u8() * 16777216) + (this.u8() << 16) + (this.u8() << 8) + this.u8();
@@ -298,15 +365,26 @@ const derToRaw = (der) => {
 
 const verifyClientData = (clientDataJSON, type, expectedChallenge, r) => {
     const cd = JSON.parse(Buffer.from(clientDataJSON).toString('utf8'));
+    const expectedOrigin = origin(r);
     if (cd.type !== type) throw new Error(`clientData type mismatch: expected ${type}, got ${cd.type}`);
     if (cd.challenge !== expectedChallenge) throw new Error('challenge mismatch');
-    if (cd.origin !== origin(r)) throw new Error(`origin mismatch: expected ${origin(r)}, got ${cd.origin}`);
+    if (cd.origin !== expectedOrigin) throw new Error(`origin mismatch: expected ${expectedOrigin}, got ${cd.origin}`);
     return cd;
 };
 
-const verify = (r) => {
-    if (validSession(r)) r.return(204);
-    else r.return(401);
+const loginUrl = (r) => {
+    const uri = r.variables?.request_uri ?? r.uri ?? '/';
+    const next = uri[0] === '/' && uri.slice(0, 2) !== '//' ? uri : '/';
+    return `/auth/login?next=${encodeURIComponent(next)}`;
+};
+
+const access = (r) => {
+    if (validSession(r)) return;
+    r.return(302, loginUrl(r));
+};
+
+const refresh = (r) => {
+    refreshSession(r);
 };
 
 const state = (r) => {
@@ -317,13 +395,10 @@ const state = (r) => {
 };
 
 const logout = (r) => {
-    if (r.method !== 'POST') { json(r, 405, { error: 'POST only' }); return; }
-    const ref = r.headersIn['Origin'];
-    if (!ref || ref !== origin(r)) { json(r, 403, { error: 'forbidden' }); return; }
+    if (!requirePostSameOrigin(r)) return;
     const sid = getCookie(r, COOKIE);
     if (sid) ngx.shared.authsess.delete(sid);
-    const chalKey = getCookie(r, 'njs_chal');
-    if (chalKey) { ngx.shared.authchal.delete(chalKey); ngx.shared.authchal.delete(`${chalKey}:taken`); }
+    clearChallenge(r);
     r.headersOut['Set-Cookie'] = [
         `${COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`,
         'njs_chal=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0'
@@ -332,12 +407,9 @@ const logout = (r) => {
 };
 
 const registerBegin = (r) => {
-    if (r.method !== 'POST') { json(r, 405, { error: 'POST only' }); return; }
-    const ref = r.headersIn['Origin'];
-    if (!ref || ref !== origin(r)) { json(r, 403, { error: 'forbidden' }); return; }
-    if (loadCred(r)) { json(r, 403, { error: 'already registered' }); return; }
-    const oldChal = getCookie(r, 'njs_chal');
-    if (oldChal) { ngx.shared.authchal.delete(oldChal); ngx.shared.authchal.delete(`${oldChal}:taken`); }
+    if (!requirePostSameOrigin(r)) return;
+    if (alreadyRegistered(r)) return;
+    clearChallenge(r);
     const challenge = randomB64(32);
     setChallenge(r, 'reg', challenge);
     json(r, 200, {
@@ -352,7 +424,10 @@ const registerBegin = (r) => {
 };
 
 const parseBodyAndChallenge = (r, type) => {
-    if (!r.requestText || r.requestText.length > MAX_BODY) { json(r, 413, { error: 'payload too large' }); return null; }
+    if (!r.requestText || r.requestText.length > MAX_BODY) {
+        json(r, 413, { error: 'payload too large' });
+        return null;
+    }
     let body;
     try {
         body = JSON.parse(r.requestText);
@@ -361,15 +436,16 @@ const parseBodyAndChallenge = (r, type) => {
         return null;
     }
     const expected = takeChallenge(r, type);
-    if (!expected) { json(r, 400, { error: 'missing or expired challenge' }); return null; }
+    if (!expected) {
+        json(r, 400, { error: 'missing or expired challenge' });
+        return null;
+    }
     return { body, expected };
 };
 
 const registerFinish = async (r) => {
-    if (r.method !== 'POST') { json(r, 405, { error: 'POST only' }); return; }
-    const ref = r.headersIn['Origin'];
-    if (!ref || ref !== origin(r)) { json(r, 403, { error: 'forbidden' }); return; }
-    if (loadCred(r)) { json(r, 403, { error: 'already registered' }); return; }
+    if (!requirePostSameOrigin(r)) return;
+    if (alreadyRegistered(r)) return;
 
     const parsed = parseBodyAndChallenge(r, 'reg');
     if (!parsed) return;
@@ -403,13 +479,10 @@ const registerFinish = async (r) => {
 };
 
 const loginBegin = (r) => {
-    if (r.method !== 'POST') { json(r, 405, { error: 'POST only' }); return; }
-    const ref = r.headersIn['Origin'];
-    if (!ref || ref !== origin(r)) { json(r, 403, { error: 'forbidden' }); return; }
-    const cred = loadCred(r);
-    if (!cred) { json(r, 404, { error: 'not registered' }); return; }
-    const oldChal = getCookie(r, 'njs_chal');
-    if (oldChal) { ngx.shared.authchal.delete(oldChal); ngx.shared.authchal.delete(`${oldChal}:taken`); }
+    if (!requirePostSameOrigin(r)) return;
+    const cred = loadRegisteredCred(r);
+    if (!cred) return;
+    clearChallenge(r);
     const challenge = randomB64(32);
     setChallenge(r, 'login', challenge);
     json(r, 200, {
@@ -422,11 +495,9 @@ const loginBegin = (r) => {
 };
 
 const loginFinish = async (r) => {
-    if (r.method !== 'POST') { json(r, 405, { error: 'POST only' }); return; }
-    const ref = r.headersIn['Origin'];
-    if (!ref || ref !== origin(r)) { json(r, 403, { error: 'forbidden' }); return; }
-    const cred = loadCred(r);
-    if (!cred) { json(r, 404, { error: 'not registered' }); return; }
+    if (!requirePostSameOrigin(r)) return;
+    const cred = loadRegisteredCred(r);
+    if (!cred) return;
 
     const req = parseBodyAndChallenge(r, 'login');
     if (!req) return;
@@ -498,4 +569,4 @@ const route = (r) => {
     json(r, 404, { error: 'not found' });
 };
 
-export default { route, verify };
+export default { route, access, refresh };

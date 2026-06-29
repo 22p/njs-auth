@@ -4,13 +4,13 @@ Guidance for AI coding agents working on the `auth/` njs WebAuthn module.
 
 ## Overview
 
-Single-user WebAuthn / Passkey authentication middleware for nginx, gating any backend via `auth_request`. Zero dependencies — pure njs (QuickJS engine) with a built-in CBOR decoder, COSE key parser, DER signature converter, and WebCrypto ES256 verification.
+Single-user WebAuthn / Passkey authentication middleware for nginx, gating any backend via `js_access`. Zero dependencies — pure njs (QuickJS engine) with a built-in CBOR decoder, COSE key parser, DER signature converter, and WebCrypto ES256 verification.
 
 | File | Purpose |
 |------|---------|
 | `auth.js` | Core module: route dispatcher, CBOR/COSE/DER, WebAuthn verify, sessions |
 | `login.html` | Login / registration page (auto-detects state) |
-| `nginx.conf` | Example config (whole-site and per-location modes) |
+| `nginx.conf` | Example config |
 | `README.md` / `README_en.md` | Chinese / English docs, kept in sync |
 	
 ## Runtime constraints
@@ -42,7 +42,7 @@ Single-user WebAuthn / Passkey authentication middleware for nginx, gating any b
 
 No test suite or build step. To sanity-check:
 
-- Verify nginx loads the module and config: `nginx -t` with `js_import auth from auth.js;`.
+- Verify nginx loads the module and config: `nginx -t` with `js_import auth from auth.js;` and protected locations using `js_access auth.access;`.
 - Manual flow: visit `/auth/login` (register mode) → save the returned `<rpId>.json` → reload (login mode) → log in.
 
 ## Git

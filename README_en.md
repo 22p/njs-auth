@@ -1,6 +1,6 @@
 # njs WebAuthn
 
-Single-user WebAuthn / Passkey authentication middleware for nginx njs.
+Single-user WebAuthn / Passkey authentication middleware for nginx njs using `js_access`.
 
 Zero dependencies — pure njs (QuickJS engine) with built-in CBOR decoder, COSE key parser, DER signature converter, and WebCrypto ECDSA verification.
 
@@ -8,14 +8,14 @@ Zero dependencies — pure njs (QuickJS engine) with built-in CBOR decoder, COSE
 
 | File | Purpose |
 |------|---------|
-| `auth.js` | Core module: route dispatcher, CBOR, COSE, DER, WebAuthn verify, sessions |
+| `auth.js` | Core module: access control, response refresh, route dispatcher, CBOR, COSE, DER, WebAuthn verify, sessions |
 | `login.html` | Login / registration page |
-| `nginx.conf` | Example config (whole-site and per-location modes) |
+| `nginx.conf` | Example config |
 
 ## Requirements
 
 - nginx with `ngx_http_js_module` (njs module)
-- njs ≥ 1.0.0 recommended, running the **QuickJS engine** (`js_engine qjs;`). Minimum ≥ 0.8.10 (QuickJS gained `Buffer`/`fs`/WebCrypto across 0.8.6–0.8.10).
+- njs ≥ 1.0.0 recommended, running the **QuickJS engine** (`js_engine qjs;`). Minimum ≥ 0.9.9 (`js_access` required; QuickJS gained `Buffer`/`fs`/WebCrypto across 0.8.6–0.8.10).
 
 ## Setup
 
@@ -38,56 +38,25 @@ http {
 }
 ```
 
-### 3. Auth endpoints (required for both modes)
-
-```nginx
-location ^~ /auth/ {
-    auth_request off;
-    client_max_body_size 16k;
-    js_content auth.route;
-}
-location = /auth/verify {
-    internal;
-    auth_request off;
-    error_page 401 403 = @verify_pass;   # required for whole-site mode
-    js_content auth.verify;
-}
-location @verify_pass   { return 401; }
-location @auth_redirect { return 302 /auth/login?next=$request_uri; }
-```
-
-### 4. Choose protection mode
-
-**Mode A — whole site:**
+### 3. Configure auth and protected paths
 
 ```nginx
 server {
-    auth_request /auth/verify;
-    error_page 401 403 = @auth_redirect;
-
-    # ... auth endpoints from step 3 ...
-    # ... your locations ...
-}
-```
-
-To exempt a path, add `auth_request off;` inside its location.
-
-**Mode B — per location:**
-
-```nginx
-server {
-    # ... auth endpoints from step 3 (no @verify_pass needed) ...
-
-    location /protected/ {
-        auth_request /auth/verify;
-        error_page 401 403 = @auth_redirect;
+    location ^~ /auth/ {
+        client_max_body_size 16k;
+        js_content auth.route;
     }
 
     location / {
-        # public, no auth
+        js_access auth.access;
+        js_header_filter auth.refresh;
+        root /usr/share/nginx/html;
+        try_files $uri /index.html;
     }
 }
 ```
+
+Whichever `location` contains `js_access auth.access` and `js_header_filter auth.refresh` is protected; public paths should not include those two directives. `js_header_filter auth.refresh` refreshes the session cookie on authenticated main responses.
 
 ## First use
 
@@ -117,7 +86,6 @@ All served by `auth.route` via `location ^~ /auth/`.
 | `/auth/login/begin` | POST | Get login challenge |
 | `/auth/login/finish` | POST | Submit assertion, creates session |
 | `/auth/logout` | POST | Destroy session |
-| `/auth/verify` | internal | For `auth_request`, returns 204 or 401 |
 
 ## Configuration
 

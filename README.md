@@ -1,6 +1,6 @@
 # njs WebAuthn 认证中间件
 
-基于 [njs](https://nginx.org/en/docs/njs/)（nginx 内嵌 JavaScript，QuickJS 引擎）实现的**单用户 WebAuthn / Passkey 认证中间件**，用 nginx 的 `auth_request` 保护任意后端。
+基于 [njs](https://nginx.org/en/docs/njs/)（nginx 内嵌 JavaScript，QuickJS 引擎）实现的**单用户 WebAuthn / Passkey 认证中间件**，用 nginx 的 `js_access` 保护任意后端。
 
 零外部依赖，纯 njs（QuickJS 引擎）实现：自带 CBOR 解码器、COSE 公钥解析、DER 签名转换，使用 njs 内置 WebCrypto（`crypto.subtle`）完成 ES256 验签。
 
@@ -8,14 +8,14 @@
 
 | 文件 | 说明 |
 |------|------|
-| `auth.js` | 核心模块：路由分发、CBOR/COSE/DER、WebAuthn 验证、会话管理 |
+| `auth.js` | 核心模块：访问控制、响应续期、路由分发、CBOR/COSE/DER、WebAuthn 验证、会话管理 |
 | `login.html` | 登录与注册页面，自动判断当前状态 |
-| `nginx.conf` | 示例配置（整站保护 + 单路径保护两种模式） |
+| `nginx.conf` | 示例配置 |
 
 ## 依赖
 
 - nginx 编译/加载了 `ngx_http_js_module`（njs 模块）
-- 推荐 njs ≥ 1.0.0，使用 **QuickJS 引擎**（`js_engine qjs;`）。最低 ≥ 0.8.10（QuickJS 在 0.8.6–0.8.10 期间陆续补齐了 `Buffer`/`fs`/WebCrypto）。
+- 推荐 njs ≥ 1.0.0，使用 **QuickJS 引擎**（`js_engine qjs;`）。最低 ≥ 0.9.9（需要 `js_access`，QuickJS 在 0.8.6–0.8.10 期间陆续补齐了 `Buffer`/`fs`/WebCrypto）。
 
 ## 安装
 
@@ -38,67 +38,25 @@ http {
 }
 ```
 
-### 3. 认证端点（两种模式通用）
-
-```nginx
-location ^~ /auth/ {
-    auth_request off;
-    client_max_body_size 16k;
-    js_content auth.route;
-}
-location = /auth/verify {
-    internal;
-    auth_request off;
-    error_page 401 403 = @verify_pass;   # 整站模式必须
-    js_content auth.verify;
-}
-location @verify_pass   { return 401; }
-location @auth_redirect { return 302 /auth/login?next=$request_uri; }
-```
-
-### 4. 选择保护模式
-
-**模式 A：整站要求登录**
-
-在 `server {}` 顶部加全局 `auth_request`，所有 location 自动继承：
+### 3. 配置认证与受保护路径
 
 ```nginx
 server {
-    auth_request /auth/verify;
-    error_page 401 403 = @auth_redirect;
-
-    # ... 上面的认证端点 ...
-    # ... 你的其他 location ...
-}
-```
-
-需要放行的公开路径单独加 `auth_request off;`：
-
-```nginx
-location = /generate_204 { auth_request off; return 204; }
-location = /ncsi.txt     { auth_request off; return 200 "Microsoft NCSI"; }
-```
-
-**模式 B：仅保护某个路径**
-
-不在 server 顶部加全局 `auth_request`，只在需要保护的 location 内单独声明：
-
-```nginx
-server {
-    # ... 上面的认证端点 ...
-
-    location /protected/ {
-        auth_request /auth/verify;
-        error_page 401 403 = @auth_redirect;
+    location ^~ /auth/ {
+        client_max_body_size 16k;
+        js_content auth.route;
     }
 
     location / {
-        # 公开访问，不验证
+        js_access auth.access;
+        js_header_filter auth.refresh;
+        root /usr/share/nginx/html;
+        try_files $uri /index.html;
     }
 }
 ```
 
-`auth_request` **不会**自动继承到同级其他 location，每个需要保护的顶层 location 都要单独加。
+把 `js_access auth.access` 和 `js_header_filter auth.refresh` 放在哪个 `location`，哪个路径就会被保护；公开路径不要配置这两行。`js_header_filter auth.refresh` 用于在已登录请求的主响应中刷新会话 Cookie。
 
 ## 首次使用
 
@@ -128,7 +86,6 @@ chmod 644 /etc/nginx/njs/example.com.json
 | `/auth/login/begin` | POST | 获取登录挑战 |
 | `/auth/login/finish` | POST | 提交断言并建立会话 |
 | `/auth/logout` | POST | 注销并清除会话 |
-| `/auth/verify` | internal | 供 `auth_request` 使用，已登录返回 204，否则 401 |
 
 ## 配置项
 

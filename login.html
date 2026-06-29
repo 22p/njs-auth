@@ -125,8 +125,7 @@ h1{margin-bottom:6px;font-size:22px;font-weight:600}
       msg=document.getElementById('msg'),
       sub=document.getElementById('sub'),
       title=document.getElementById('title'),
-      mode='login',
-      pendingOpts=null;
+      mode='login';
 
   function b64urlToBuf(s){
     s=s.replace(/-/g,'+').replace(/_/g,'/');
@@ -196,25 +195,24 @@ h1{margin-bottom:6px;font-size:22px;font-weight:600}
     }catch(e){sub.textContent='无法连接服务器'}
   }
 
-  async function prefetchOptions(){
+  async function getOptions(){
     if(mode==='register'){
       var opts=await fetch('/auth/register/begin',{method:'POST'}).then(function(r){return r.json()});
       if(opts.error) throw new Error(opts.error);
       opts.challenge=b64urlToBuf(opts.challenge);
       opts.user.id=b64urlToBuf(opts.user.id);
-      pendingOpts=opts;
-    }else{
-      var lopts=await fetch('/auth/login/begin',{method:'POST'}).then(function(r){return r.json()});
-      if(lopts.error) throw new Error(lopts.error);
-      lopts.challenge=b64urlToBuf(lopts.challenge);
-      lopts.allowCredentials=lopts.allowCredentials.map(function(c){return{type:c.type,id:b64urlToBuf(c.id)}});
-      pendingOpts=lopts;
+      return opts;
     }
+    var lopts=await fetch('/auth/login/begin',{method:'POST'}).then(function(r){return r.json()});
+    if(lopts.error) throw new Error(lopts.error);
+    lopts.challenge=b64urlToBuf(lopts.challenge);
+    lopts.allowCredentials=lopts.allowCredentials.map(function(c){return{type:c.type,id:b64urlToBuf(c.id)}});
+    return lopts;
   }
 
   async function doRegister(){
-    await prefetchOptions();
-    var cred=await navigator.credentials.create({publicKey:pendingOpts});
+    var opts=await getOptions();
+    var cred=await navigator.credentials.create({publicKey:opts});
     var body={
       id:cred.id,rawId:bufToB64url(cred.rawId),type:cred.type,
       response:{clientDataJSON:bufToB64url(cred.response.clientDataJSON),attestationObject:bufToB64url(cred.response.attestationObject)}
@@ -225,8 +223,8 @@ h1{margin-bottom:6px;font-size:22px;font-weight:600}
   }
 
   async function doLogin(){
-    await prefetchOptions();
-    var cred=await navigator.credentials.get({publicKey:pendingOpts});
+    var opts=await getOptions();
+    var cred=await navigator.credentials.get({publicKey:opts});
     var body={
       id:cred.id,rawId:bufToB64url(cred.rawId),type:cred.type,
       response:{clientDataJSON:bufToB64url(cred.response.clientDataJSON),authenticatorData:bufToB64url(cred.response.authenticatorData),signature:bufToB64url(cred.response.signature),userHandle:cred.response.userHandle?bufToB64url(cred.response.userHandle):null}
