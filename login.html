@@ -192,7 +192,6 @@ h1{margin-bottom:6px;font-size:22px;font-weight:600}
         sub.textContent='注册后无需密码即可登录';
         btn.querySelector('.btn-text').textContent='创建';
       }
-      await prefetchOptions();
       btn.disabled=false;
     }catch(e){sub.textContent='无法连接服务器'}
   }
@@ -214,6 +213,7 @@ h1{margin-bottom:6px;font-size:22px;font-weight:600}
   }
 
   async function doRegister(){
+    await prefetchOptions();
     var cred=await navigator.credentials.create({publicKey:pendingOpts});
     var body={
       id:cred.id,rawId:bufToB64url(cred.rawId),type:cred.type,
@@ -225,6 +225,7 @@ h1{margin-bottom:6px;font-size:22px;font-weight:600}
   }
 
   async function doLogin(){
+    await prefetchOptions();
     var cred=await navigator.credentials.get({publicKey:pendingOpts});
     var body={
       id:cred.id,rawId:bufToB64url(cred.rawId),type:cred.type,
@@ -273,7 +274,6 @@ h1{margin-bottom:6px;font-size:22px;font-weight:600}
       };
       show(map[e.name]||'操作失败，请重试','err');
       setLoading(false);
-      try{await prefetchOptions();}catch(_){}
     }
   });
 
