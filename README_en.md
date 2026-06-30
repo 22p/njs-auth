@@ -71,7 +71,7 @@ chmod 644 /etc/nginx/njs/example.com.json
 
 4. Reload — page shows "login" mode. Log in with your passkey.
 
-The credential file is **read-only** by nginx — no write permissions needed. Each site gets its own file named after its RP ID, so multiple sites can share the same `auth.js`.
+The credential file is **read-only** by nginx — no write permissions needed. Each site gets its own file named after its RP ID, so multiple sites can share the same `auth.js`. Successfully loaded credentials are cached in module-global memory; reload nginx after changing a credential file.
 
 ## Endpoints
 
@@ -94,7 +94,7 @@ In `auth.js`:
 | Constant | Default | Description |
 |----------|---------|-------------|
 | `CRED_DIR` | `/etc/nginx/njs` | Credential directory (files named `<rpId>.json`) |
-| `LOGIN_FILE` | `/etc/nginx/njs/login.html` | Login page path |
+| `LOGIN_FILE` | `/etc/nginx/njs/login.html` | Login page path (cached after first read; reload nginx after changes) |
 | `RP_NAME` | `njs-auth` | Relying Party name |
 | `RP_ID` | `""` | Relying Party ID (auto-detected from `$host` if empty) |
 | `ORIGIN` | `""` | Expected origin (auto-derived from `$scheme` + `$http_host` if empty) |

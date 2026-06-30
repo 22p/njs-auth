@@ -71,7 +71,7 @@ chmod 644 /etc/nginx/njs/example.com.json
 
 4. 刷新页面 → 进入**登录**模式 → 用通行密钥登录，获得会话 Cookie。
 
-凭据文件对 nginx **只读**即可，无需写权限。每个站点按 RP ID 命名凭据文件，多个站点可共用同一个 `auth.js`。
+凭据文件对 nginx **只读**即可，无需写权限。每个站点按 RP ID 命名凭据文件，多个站点可共用同一个 `auth.js`。凭据成功首次读取后会缓存在 njs 模块全局变量中，文件内容变更后需 reload nginx 才会重新加载。
 
 ## 端点
 
@@ -94,7 +94,7 @@ chmod 644 /etc/nginx/njs/example.com.json
 | 常量 | 默认值 | 说明 |
 |------|--------|------|
 | `CRED_DIR` | `/etc/nginx/njs` | 凭据目录（文件名为 `<rpId>.json`） |
-| `LOGIN_FILE` | `/etc/nginx/njs/login.html` | 登录页文件路径 |
+| `LOGIN_FILE` | `/etc/nginx/njs/login.html` | 登录页文件路径（首次读取后缓存，修改后需 reload nginx） |
 | `RP_NAME` | `njs-auth` | Relying Party 名称 |
 | `RP_ID` | `""` | Relying Party ID（为空时从 `$host` 自动获取） |
 | `ORIGIN` | `""` | 期望的 Origin（为空时由 `$scheme` + `$http_host` 自动推导） |

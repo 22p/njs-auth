@@ -11,6 +11,9 @@ const CHALLENGE_TTL        = 300;
 const COOKIE               = 'njs_session';
 const MAX_BODY             = 16384;
 
+const credCache = {};
+let loginHtmlCache = null;
+
 const nowSec = () => Math.floor(Date.now() / 1000);
 
 const b64urlDecode = (s) => {
@@ -73,15 +76,20 @@ const json = (r, code, obj) => {
     r.return(code, JSON.stringify(obj));
 };
 
-const credFile = (r) => {
-    const id = rpId(r);
+const credPath = (id) => {
     if (/[^a-zA-Z0-9.\-:]/.test(id)) throw new Error('bad rpId');
     return `${CRED_DIR}/${id}.json`;
 };
 
+const credFile = (r) => credPath(rpId(r));
+
 const loadCred = (r) => {
+    const id = rpId(r);
+    if (credCache[id]) return credCache[id];
     try {
-        return JSON.parse(fs.readFileSync(credFile(r), 'utf8'));
+        const cred = JSON.parse(fs.readFileSync(credPath(id), 'utf8'));
+        credCache[id] = cred;
+        return cred;
     } catch (e) {
         return null;
     }
@@ -546,15 +554,16 @@ const loginFinish = async (r) => {
 };
 
 const serveLogin = (r) => {
-    let html;
-    try {
-        html = fs.readFileSync(LOGIN_FILE, 'utf8');
-    } catch (e) {
-        r.return(500, 'login.html not found');
-        return;
+    if (loginHtmlCache === null) {
+        try {
+            loginHtmlCache = fs.readFileSync(LOGIN_FILE, 'utf8');
+        } catch (e) {
+            r.return(500, 'login.html not found');
+            return;
+        }
     }
     r.headersOut['Content-Type'] = 'text/html; charset=utf-8';
-    r.return(200, html);
+    r.return(200, loginHtmlCache);
 };
 
 const route = (r) => {
