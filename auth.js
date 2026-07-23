@@ -469,7 +469,6 @@ const registerFinish = async (r) => {
         if (!authData.up) throw new Error('user not present');
         if (body.id !== b64urlEncode(authData.credId)) throw new Error('credential id mismatch');
         if (!authData.at) throw new Error('missing attested credential data');
-        if (attObj.fmt !== 'none') throw new Error('attestation format not none');
 
         const h = await sha256(Buffer.from(rpId(r)));
         if (!constantEqual(new Uint8Array(h), authData.rpIdHash)) throw new Error('rpId hash mismatch');
